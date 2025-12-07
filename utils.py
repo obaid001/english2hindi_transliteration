@@ -2,14 +2,14 @@ import warnings
 warnings.filterwarnings('ignore')
 import numpy as np
 import re
+import tensorflow as tf
 from tensorflow.keras.activations import *
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 import string
-import pickle
-from gensim.models import KeyedVectors
-from functools import lru_cache
-
+tf.config.run_functions_eagerly(True)
 
 def preprocess(text_data, decont = False):
     def decontracted(phrase):
@@ -36,6 +36,22 @@ def preprocess(text_data, decont = False):
     sentance = sentance.lower().strip()
     return sentance
 
+def load_glove_vectors(glove_file):
+    embeddings = {}
+    with open(glove_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            values = line.split()
+            word = values[0]
+            vector = np.asarray(values[1:], dtype='float32')
+            embeddings[word] = vector
+    return embeddings
+
+def tokenize_and_pad_sequences(texts, max_sequence_length):
+    tokenizer = Tokenizer(char_level=True, lower=False)
+    tokenizer.fit_on_texts(texts)
+    sequences = tokenizer.texts_to_sequences(texts)
+    padded_sequences = pad_sequences(sequences, maxlen=max_sequence_length, padding='post')
+    return padded_sequences, tokenizer
 
 def create_embedding_matrix(tokenizer, word2vec_model, embedding_size):
     embedding_matrix = np.zeros((len(tokenizer.word_index) + 1, embedding_size))
@@ -44,74 +60,36 @@ def create_embedding_matrix(tokenizer, word2vec_model, embedding_size):
             embedding_matrix[index] = word2vec_model[word]
     return embedding_matrix
 
-@lru_cache(maxsize=None)
-def model_init():
-    print("Model Loading")
-    def load_glove_vectors(glove_file):
-        embeddings = {}
-        with open(glove_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                values = line.split()
-                word = values[0]
-                vector = np.asarray(values[1:], dtype='float32')
-                embeddings[word] = vector
-        return embeddings
-    
-    english_embeddings = load_glove_vectors("embeddings/glove.6B.300d.txt")
+def transliterate(input_text, encoder_model, decoder_model, input_tokenizer, output_tokenizer, max_sequence_length):
+    input_seq = input_tokenizer.texts_to_sequences([input_text])
+    input_seq = pad_sequences(input_seq, maxlen=max_sequence_length, padding='post')
 
-    hindi_embeddings = KeyedVectors.load_word2vec_format("./embeddings/hi.vec", binary=False)
+    states_value = encoder_model.predict(input_seq)
 
-    max_sequence_length = 36
+    target_seq = np.zeros((1, 1))
+    target_seq[0, 0] = output_tokenizer.word_index['\t']
 
-    with open('english_tokenizer.pickle', 'rb') as handle:
-        english_tokenizer = pickle.load(handle)
-    handle.close()
+    stop_condition = False
+    decoded_sentence = ''
 
-    with open('hindi_tokenizer.pickle', 'rb') as handle:
-        hindi_tokenizer = pickle.load(handle)
-    handle.close()
+    while not stop_condition:
+        output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
 
-    embedding_size = 300
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+        sampled_char = output_tokenizer.index_word[sampled_token_index]
 
-    english_embedding_matrix = create_embedding_matrix(english_tokenizer, english_embeddings, embedding_size)
-    hindi_embedding_matrix = create_embedding_matrix(hindi_tokenizer, hindi_embeddings, embedding_size)
+        decoded_sentence += sampled_char
 
-    input_vocab_size = len(english_tokenizer.word_index) + 1
-    output_vocab_size = len(hindi_tokenizer.word_index) + 1
-    lstm_size = 256
-    encoder_inputs = Input(shape=(max_sequence_length,))
-    encoder_embedding = Embedding(input_vocab_size, embedding_size, mask_zero=True, weights=[english_embedding_matrix],
-                                trainable=False)(encoder_inputs)
-    encoder_dropout = Dropout(0.9)(encoder_embedding)
-    encoder_lstm = LSTM(lstm_size, return_state=True, return_sequences=True)
-    _, encoder_state_h, encoder_state_c = encoder_lstm(encoder_dropout)
-    encoder_states = [encoder_state_h, encoder_state_c]
+        if sampled_char == '\n' or len(decoded_sentence) > max_sequence_length:
+            stop_condition = True
 
-    decoder_inputs = Input(shape=(max_sequence_length,))
-    decoder_embedding = Embedding(output_vocab_size, embedding_size, mask_zero=True, weights=[hindi_embedding_matrix],
-                                trainable=False)(decoder_inputs)
-    decoder_dropout = Dropout(0.9)(decoder_embedding)
-    decoder_lstm = LSTM(lstm_size, return_sequences=True, return_state=True)
-    decoder_outputs, _, _ = decoder_lstm(decoder_dropout, initial_state=encoder_states)
-    decoder_dense = Dense(output_vocab_size, activation='softmax')
-    outputs = decoder_dense(decoder_outputs)
+        target_seq = np.zeros((1, 1))
+        target_seq[0, 0] = sampled_token_index
 
-    model = Model([encoder_inputs, decoder_inputs], outputs)
+        states_value = [h, c]
 
-    model.load_weights('model_weights.h5')
+    return decoded_sentence.strip()
 
-    # Encoder model for inference
-    encoder_model = Model(encoder_inputs, encoder_states)
 
-    # Decoder model for inference
-    decoder_state_input_h = Input(shape=(lstm_size,))
-    decoder_state_input_c = Input(shape=(lstm_size,))
-    decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
 
-    decoder_outputs, state_h, state_c = decoder_lstm(decoder_dropout, initial_state=decoder_states_inputs)
-    decoder_states = [state_h, state_c]
-    decoder_outputs = decoder_dense(decoder_outputs)
 
-    decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
-
-    return encoder_model, decoder_model, english_tokenizer, hindi_tokenizer, max_sequence_length

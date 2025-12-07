@@ -1,52 +1,21 @@
-# English to Hindi Transliteration
-This repo takes english sentence as input and returns a hindi transcripted sentence like “namaste” to “नमस्ते” 
+# English → Hindi Transliteration  
+### **A Sequence-to-Sequence Based Transliteration Model**
 
-## Evaluation:
-- Train accuracy 84% and Validation accuracy 75%.
+This project implements an **LSTM-based Seq2Seq transliteration system** designed to convert **English text into Hindi script**.  
+It focuses on learning character-level mappings using an encoder–decoder architecture.
 
-## Instruction to run:
-### You can run this app in two ways app cold start/initializaton time 30-40 sec
-1 - As Flask app
-- Run the following command in different terminal
+---
 
-<pre>
-python fast_app.py
-python flask_app.py
-</pre>
+## Training Logs
 
-2 - As FastAPI
-- Run the following command in terminal
-<pre>
-python fast_app.py
-</pre>
-then 
-```python
-import requests
-url = "http://127.0.0.1:8000/transliterate"
+<p align="center">
+  <img src="assets/training_logs.png" alt="Training Logs" width="600">
+</p>
 
-data = {"text": "aur kya hai"}
+---
 
-response = requests.post(url, json=data)
-
-if response.status_code == 200:
-    result = response.json()
-    print("Transliterated text:", result["output_text"])
-else:
-    print("Error:", response.status_code, response.text)
-```
-
-3 - As python module
-```python
-from utils import *
-from trans import transliterate
-encoder_model, decoder_model, english_tokenizer, hindi_tokenizer, max_sequence_length = model_init()
-def transliterate_text(text):
-    text = preprocess(text)
-    text = '\t ' + text + ' \n'
-    output_text = ' '
-    for x in text.split():
-        transliterated_text = transliterate(x, encoder_model, decoder_model, english_tokenizer, hindi_tokenizer, max_sequence_length)
-        output_text = output_text + ' ' + transliterated_text
-    return output_text.strip()
-output_text = transliterate_text('aur kya hai')
-```
+## Features
+- **Character-level transliteration**
+- **Seq2Seq architecture with LSTM Encoder–Decoder**
+- **Training visualization & logs**
+- Easy to extend to other language pairs
